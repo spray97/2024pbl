@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>마스크 착용 감지</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background-color: #f0f0f0;
+            padding: 10px;
+            margin: 0;
+        }
+        .container {
+            background-color: white;
+            padding: 15px;
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+            text-align: center;
+            width: 95%;
+            max-width: 500px;
+        }
+        h1 {
+            font-size: 1.5em;
+            margin: 10px 0;
+        }
+        #webcam-container {
+            margin-bottom: 10px;
+            width: 100%;
+        }
+        #webcam-container canvas {
+            width: 100% !important;
+            height: auto !important;
+        }
+        #label-container {
+            font-size: 20px;
+            font-weight: bold;
+            padding: 15px;
+            margin-top: 10px;
+            border-radius: 5px;
+            word-break: keep-all;
+        }
+        .warning {
+            color: #d9534f;
+            background-color: #f9eaea;
+        }
+        .success {
+            color: #5cb85c;
+            background-color: #eaf9ea;
+        }
+        #camera-select {
+            margin: 10px 0;
+            padding: 8px;
+            border-radius: 5px;
+            border: 1px solid #ddd;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>마스크 착용 감지 시스템</h1>
+        <select id="camera-select">
+            <option value="user">전면 카메라</option>
+            <option value="environment">후면 카메라</option>
+        </select>
+        <div id="webcam-container"></div>
+        <div id="label-container"></div>
+    </div>
+
+    <!-- 음성 합성을 위한 스크립트 추가 -->
+    <script type="text/javascript">
+        // 음성 합성 초기화
+        const speech = new SpeechSynthesisUtterance();
+        speech.lang = 'ko-KR'; // 한국어 설정
+        speech.volume = 1;
+        speech.rate = 1;
+        speech.pitch = 1;
+
+        // 메시지 재생 제어 변수
+        let lastSpokenMessage = '';
+        let lastSpokenTime = 0;
+
+        // 메시지 재생 함수
+        function speakMessage(message) {
+            const currentTime = new Date().getTime();
+            // 같은 메시지는 3초 간격으로만 재생
+            if (message !== lastSpokenMessage || currentTime - lastSpokenTime > 3000) {
+                speech.text = message;
+                window.speechSynthesis.speak(speech);
+                lastSpokenMessage = message;
+                lastSpokenTime = currentTime;
+            }
+        }
+    </script>
+
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@1.3.1/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@0.8/dist/teachablemachine-image.min.js"></script>
+    <script type="text/javascript">
+        const URL = "https://teachablemachine.withgoogle.com/models/ya17qFlog/";
+        let model, webcam, labelContainer, maxPredictions;
+
+        // 카메라 설정을 위한 변수
+        let currentStream = null;
+
+        async function init(facingMode = 'user') {
+            if (currentStream) {
+                currentStream.getTracks().forEach(track => track.stop());
+            }
+
+            const modelURL = URL + "model.json";
+            const metadataURL = URL + "metadata.json";
+
+            try {
+                // 모델 로드
+                model = await tmImage.load(modelURL, metadataURL);
+                maxPredictions = model.getTotalClasses();
+
+                // 웹캠 설정
+                const flip = facingMode === 'user'; // 전면 카메라일 때만 좌우 반전
+                const width = Math.min(window.innerWidth - 30, 400); // 화면 크기에 맞춤
+                webcam = new tmImage.Webcam(width, width, flip); // 정사각형 비율 유지
+
+                await webcam.setup({ facingMode: facingMode });
+                await webcam.play();
+                currentStream = webcam.webcam.srcObject;
+                window.requestAnimationFrame(loop);
+
+                // 웹캠 컨테이너에 캔버스 추가
+                const webcamContainer = document.getElementById("webcam-container");
+                webcamContainer.innerHTML = '';
+                webcamContainer.appendChild(webcam.canvas);
+
+                // 초기 레이블 설정
+                labelContainer.className = "";
+                labelContainer.innerHTML = "카메라가 정상적으로 작동합니다.";
+            } catch (e) {
+                console.error('카메라 설정 오류:', e);
+                labelContainer.className = "warning";
+                labelContainer.innerHTML = "카메라 접근 권한을 허용해주세요!";
+                speakMessage("카메라 접근 권한을 허용해주세요!");
+            }
+        }
+
+        async function loop() {
+            webcam.update();
+            await predict();
+            window.requestAnimationFrame(loop);
+        }
+
+        async function predict() {
+            try {
+                const prediction = await model.predict(webcam.canvas);
+                
+                if (prediction[0].probability > prediction[1].probability) {
+                    labelContainer.className = "success";
+                    labelContainer.innerHTML = "환영합니다!";
+                    speakMessage("환영합니다!");
+                } else {
+                    labelContainer.className = "warning";
+                    labelContainer.innerHTML = "마스크를 쓰고 입장하세요.";
+                    speakMessage("마스크를 쓰고 입장하세요.");
+                }
+            } catch (e) {
+                console.error('예측 오류:', e);
+                labelContainer.className = "warning";
+                labelContainer.innerHTML = "예측 중 오류가 발생했습니다.";
+                // 필요시 음성으로 오류 메시지 추가
+                speakMessage("예측 중 오류가 발생했습니다.");
+            }
+        }
+
+        // 카메라 선택 이벤트 리스너
+        document.getElementById('camera-select').addEventListener('change', function(e) {
+            init(e.target.value);
+        });
+
+        // 초기 실행
+        labelContainer = document.getElementById("label-container");
+        init('user');
+    </script>
+</body>
+</html>
+
